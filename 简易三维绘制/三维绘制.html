@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>三维模型绘制工具 v1.0</title>
+    <style>
+        /* --- 布局保持不变 --- */
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', sans-serif; background: #000; height: 100vh; display: flex; }
+        #sidebar { width: 340px; height: 100vh; background: #1a1a1a; border-right: 1px solid #333; display: flex; flex-direction: column; color: #ddd; flex-shrink: 0; z-index: 10; }
+        .sidebar-header { padding: 15px; background: #222; border-bottom: 1px solid #333; }
+        .sidebar-content { flex: 1; overflow-y: auto; padding: 15px; }
+        .sidebar-footer { padding: 10px; background: #222; border-top: 1px solid #333; font-size: 11px; color: #666; text-align: center; }
+        #canvas-wrapper { flex: 1; position: relative; overflow: hidden; }
+
+        /* UI 组件 */
+        h3 { margin: 20px 0 10px 0; font-size: 13px; color: #4db8ff; border-left: 3px solid #4db8ff; padding-left: 8px; text-transform: uppercase; letter-spacing: 1px; }
+        .row { display: flex; gap: 5px; margin-bottom: 8px; align-items: center; }
+        label { font-size: 11px; color: #aaa; width: 45px; }
+        input, select { flex: 1; background: #333; border: 1px solid #555; color: white; padding: 6px; border-radius: 4px; font-size: 12px; min-width: 0; }
+        input:focus { border-color: #4db8ff; outline: none; }
+        
+        button { width: 100%; padding: 10px; margin-top: 5px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; font-size: 12px; transition: 0.2s; color: white; }
+        .btn-create { background: linear-gradient(to right, #2980b9, #3498db); } .btn-create:hover { opacity: 0.9; }
+        .btn-op { background: #444; border: 1px solid #555; } .btn-op:hover { background: #555; }
+        .btn-danger { background: #c0392b; }
+        .btn-export { background: #27ae60; margin-bottom: 5px; }
+        .btn-small { padding: 4px; font-size: 10px; width: auto; background: #555; }
+
+        .param-group { display: none; background: #252525; padding: 10px; border-radius: 4px; border: 1px solid #333; margin-bottom: 10px; }
+        .param-group.active { display: block; }
+
+        #info-overlay { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 4px; color: #4db8ff; font-size: 12px; pointer-events: none; border: 1px solid #4db8ff; display: none; }
+        
+        /* 参考点辅助线 */
+        .separator { border-top: 1px dashed #444; margin: 15px 0; }
+    </style>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "three-csg-ts": "https://unpkg.com/three-csg-ts@3.2.0/lib/esm/index.js"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h2 style="margin:0; font-size:18px; color:white;">三维模型绘制工具 <span style="font-size:12px; color:#f39c12;">v1.0</span></h2>
+        </div>
+        
+        <div class="sidebar-content">
+            <h3>1. 新建模型</h3>
+            <select id="shapeType">
+                <option value="cube">长方体</option>
+                <option value="cylinder">圆柱体</option>
+                <option value="sphere">球体</option>
+                <option value="cone">圆锥体</option>
+                <option value="torus">圆环</option>
+            </select>
+
+            <div id="params-cube" class="param-group active">
+                <div class="row"><label>长 X</label><input type="number" id="cube-x" value="2"></div>
+                <div class="row"><label>高 Y</label><input type="number" id="cube-y" value="2"></div>
+                <div class="row"><label>宽 Z</label><input type="number" id="cube-z" value="2"></div>
+            </div>
+            <div id="params-cylinder" class="param-group"><div class="row"><label>半径</label><input type="number" id="cyl-r" value="1"><label>高度</label><input type="number" id="cyl-h" value="4"></div><div class="row"><label>精度</label><input type="number" id="cyl-seg" value="64"></div></div>
+            <div id="params-sphere" class="param-group"><div class="row"><label>半径</label><input type="number" id="sph-r" value="1.5"></div><div class="row"><label>精度</label><input type="number" id="sph-seg" value="48"></div></div>
+            <div id="params-cone" class="param-group"><div class="row"><label>半径</label><input type="number" id="cone-r" value="1"><label>高度</label><input type="number" id="cone-h" value="3"></div></div>
+            <div id="params-torus" class="param-group"><div class="row"><label>主半径</label><input type="number" id="tor-r" value="2"><label>管半径</label><input type="number" id="tor-t" value="0.5"></div></div>
+
+            <div class="row"><label>位置</label><input type="number" id="posX" placeholder="X" value="0"><input type="number" id="posY" placeholder="Y" value="0"><input type="number" id="posZ" placeholder="Z" value="0"></div>
+            <button class="btn-create" id="createBtn">生成模型</button>
+
+            <h3>2. 旋转与复制</h3>
+            
+            <div style="background:#222; padding:10px; border-radius:4px;">
+                <label style="width:100%; color:#fff; margin-bottom:5px;">旋转设置</label>
+                <div class="row">
+                    <label>角度°</label>
+                    <input type="number" id="rotAngle" value="45">
+                    <select id="rotAxis" style="width:60px; flex:none;">
+                        <option value="x">X 轴</option>
+                        <option value="y">Y 轴</option>
+                        <option value="z">Z 轴</option>
+                    </select>
+                </div>
+
+                <button class="btn-op" id="rotSelfBtn">绕自身中心旋转</button>
+
+                <div class="separator"></div>
+
+                <div class="row" style="justify-content:space-between;">
+                    <label style="width:auto; color:#f39c12;">参考点:</label>
+                    <button id="setRefToCenterBtn" class="btn-small">设为选中中心</button>
+                </div>
+                <div class="row">
+                    <input type="number" id="refX" placeholder="Ref X" value="0">
+                    <input type="number" id="refY" placeholder="Ref Y" value="0">
+                    <input type="number" id="refZ" placeholder="Ref Z" value="0">
+                </div>
+                <button class="btn-op" id="rotRefBtn" style="border:1px solid #f39c12;">绕参考点公转</button>
+            </div>
+
+            <div style="margin-top:15px;">
+                <label style="margin-bottom:5px; display:block;">复制目标位置</label>
+                <div class="row"><input type="number" id="targetX" placeholder="X" value="5"><input type="number" id="targetY" placeholder="Y" value="0"><input type="number" id="targetZ" placeholder="Z" value="0"></div>
+                <button class="btn-op" id="copyGroupBtn">复制选中模型到目标点</button>
+            </div>
+
+            <h3>3. 平移</h3>
+            <div style="font-size:11px; color:#888; margin-bottom:5px;">选中模型后可沿坐标轴平移</div>
+            <div class="row">
+                <label>步长</label>
+                <input type="number" id="moveStep" value="0.5" step="0.1" min="0.01" style="width:60px; flex:none;">
+                <button id="moveStepSmall" class="btn-small" style="width:28px;" title="减小步长">-</button>
+                <button id="moveStepLarge" class="btn-small" style="width:28px;" title="增大步长">+</button>
+            </div>
+            <div style="display:flex; gap:4px; margin-top:8px;">
+                <button class="btn-op" id="moveXNeg" style="flex:1;">X-</button>
+                <button class="btn-op" id="moveXPos" style="flex:1;">X+</button>
+                <button class="btn-op" id="moveYNeg" style="flex:1;">Y-</button>
+                <button class="btn-op" id="moveYPos" style="flex:1;">Y+</button>
+                <button class="btn-op" id="moveZNeg" style="flex:1;">Z-</button>
+                <button class="btn-op" id="moveZPos" style="flex:1;">Z+</button>
+            </div>
+            <div class="row" style="margin-top:5px;">
+                <label>精确</label>
+                <input type="number" id="moveToX" placeholder="X" value="0" step="0.01">
+                <input type="number" id="moveToY" placeholder="Y" value="0" step="0.01">
+                <input type="number" id="moveToZ" placeholder="Z" value="0" step="0.01">
+                <button class="btn-op" id="moveToBtn" style="width:auto; flex:none; padding:6px 10px;">移动到此</button>
+            </div>
+
+            <h3>4. 布尔运算</h3>
+            <div style="font-size:11px; color:#888; margin-bottom:5px;">选中 2 个物体 (Shift+点击), 运算后保留 A 的材质</div>
+            <div class="row">
+                <button class="btn-op" id="boolSub" style="background:#d35400;">差集 (A - B)</button>
+                <button class="btn-op" id="boolUnion" style="background:#2980b9;">并集 (A + B)</button>
+            </div>
+            <button class="btn-op" id="boolIntersect" style="background:#27ae60;">交集 (A & B)</button>
+
+            <h3>5. 导出</h3>
+            <button class="btn-export" id="exportStlBtn">导出 STL 格式</button>
+            <button class="btn-export" id="exportObjBtn" style="background:#8e44ad;">导出 OBJ 格式</button>
+            <button class="btn-danger" id="delBtn" style="margin-top:10px;">删除选中模型</button>
+        </div>
+        <div class="sidebar-footer">MingYue</div>
+    </div>
+
+    <div id="canvas-wrapper">
+        <div id="info-overlay">选中: <span id="sel-count">0</span></div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+        import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+        import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
+        import { CSG } from 'three-csg-ts';
+
+        // --- 场景初始化 ---
+        const container = document.getElementById('canvas-wrapper');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x111111);
+        
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+        camera.position.set(10, 10, 15);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        container.appendChild(renderer.domElement);
+
+        // --- 辅助显示 ---
+        const gridHelper = new THREE.GridHelper(100, 100, 0x444444, 0x222222);
+        scene.add(gridHelper);
+        const axesHelper = new THREE.AxesHelper(5);
+        scene.add(axesHelper);
+
+        // 参考点辅助球 (可视化 Pivot Point)
+        const refPointGeo = new THREE.SphereGeometry(0.2, 16, 16);
+        const refPointMat = new THREE.MeshBasicMaterial({ color: 0xf39c12, wireframe: true, transparent: true, opacity: 0.5 });
+        const refPointMesh = new THREE.Mesh(refPointGeo, refPointMat);
+        scene.add(refPointMesh); // 默认在 0,0,0
+
+        // --- 灯光 ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
+        scene.add(hemiLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(10, 20, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // --- 核心变量 ---
+        let objects = []; 
+        let selection = [];
+        
+        const defaultMat = new THREE.MeshStandardMaterial({ color: 0x3498db, roughness: 0.25, metalness: 0.15 });
+        const selectedMat = new THREE.MeshStandardMaterial({ color: 0xe74c3c, emissive: 0x440000 });
+        const secondaryMat = new THREE.MeshStandardMaterial({ color: 0xf1c40f, emissive: 0x444400 });
+
+        // --- 1. 创建逻辑 (保持简洁) ---
+        const shapeSelect = document.getElementById('shapeType');
+        shapeSelect.addEventListener('change', (e) => {
+            document.querySelectorAll('.param-group').forEach(el => el.classList.remove('active'));
+            const g = document.getElementById('params-' + e.target.value);
+            if(g) g.classList.add('active');
+        });
+
+        document.getElementById('createBtn').addEventListener('click', () => {
+            const type = shapeSelect.value;
+            const pos = new THREE.Vector3(
+                parseFloat(document.getElementById('posX').value)||0,
+                parseFloat(document.getElementById('posY').value)||0,
+                parseFloat(document.getElementById('posZ').value)||0
+            );
+
+            let geo;
+            // 简单参数读取
+            if(type==='cube') geo = new THREE.BoxGeometry(
+                parseFloat(document.getElementById('cube-x').value),
+                parseFloat(document.getElementById('cube-y').value),
+                parseFloat(document.getElementById('cube-z').value)
+            );
+            else if(type==='cylinder') geo = new THREE.CylinderGeometry(
+                parseFloat(document.getElementById('cyl-r').value), parseFloat(document.getElementById('cyl-r').value),
+                parseFloat(document.getElementById('cyl-h').value), parseFloat(document.getElementById('cyl-seg').value)
+            );
+            else if(type==='sphere') geo = new THREE.SphereGeometry(
+                parseFloat(document.getElementById('sph-r').value), parseFloat(document.getElementById('sph-seg').value), parseFloat(document.getElementById('sph-seg').value)
+            );
+            else if(type==='cone') geo = new THREE.ConeGeometry(
+                parseFloat(document.getElementById('cone-r').value), parseFloat(document.getElementById('cone-h').value), 48
+            );
+            else if(type==='torus') geo = new THREE.TorusGeometry(
+                parseFloat(document.getElementById('tor-r').value), parseFloat(document.getElementById('tor-t').value), 32, 100
+            );
+
+            const mesh = new THREE.Mesh(geo, defaultMat.clone());
+            mesh.position.copy(pos);
+            mesh.castShadow = true; mesh.receiveShadow = true;
+            scene.add(mesh);
+            objects.push(mesh);
+            selection = [mesh];
+            updateSelectionVisuals();
+        });
+
+        // --- 2. 交互选择 ---
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        container.addEventListener('pointerdown', (e) => {
+            const rect = container.getBoundingClientRect();
+            mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(objects);
+
+            if (intersects.length > 0) {
+                const obj = intersects[0].object;
+                if (e.shiftKey) {
+                    if (selection.includes(obj)) selection = selection.filter(o => o !== obj);
+                    else selection.push(obj);
+                } else {
+                    selection = [obj];
+                }
+            } else if (!e.shiftKey) {
+                selection = [];
+            }
+            updateSelectionVisuals();
+        });
+
+        function updateSelectionVisuals() {
+            objects.forEach(obj => { if(obj.userData.orgMat) obj.material = obj.userData.orgMat; });
+            selection.forEach((obj, idx) => {
+                if(!obj.userData.orgMat) obj.userData.orgMat = obj.material;
+                obj.material = (idx === 0) ? selectedMat.clone() : secondaryMat.clone();
+            });
+            const overlay = document.getElementById('info-overlay');
+            overlay.style.display = selection.length ? 'block' : 'none';
+            document.getElementById('sel-count').innerText = selection.length;
+        }
+
+        // 辅助：获取选中组中心
+        function getGroupCenter(objs) {
+            if (objs.length === 0) return new THREE.Vector3();
+            const box = new THREE.Box3();
+            objs.forEach(o => box.expandByObject(o));
+            const c = new THREE.Vector3();
+            box.getCenter(c);
+            return c;
+        }
+
+        // --- 3. 核心：高级旋转逻辑 (修正版) ---
+        
+        // 更新参考点可视化位置
+        function updateRefPointVisual() {
+            const rx = parseFloat(document.getElementById('refX').value)||0;
+            const ry = parseFloat(document.getElementById('refY').value)||0;
+            const rz = parseFloat(document.getElementById('refZ').value)||0;
+            refPointMesh.position.set(rx, ry, rz);
+        }
+        
+        // 监听参考点输入变化
+        ['refX', 'refY', 'refZ'].forEach(id => {
+            document.getElementById(id).addEventListener('change', updateRefPointVisual);
+        });
+
+        // 按钮：将参考点设为选中中心
+        document.getElementById('setRefToCenterBtn').addEventListener('click', () => {
+            if(selection.length === 0) return;
+            const c = getGroupCenter(selection);
+            document.getElementById('refX').value = c.x.toFixed(2);
+            document.getElementById('refY').value = c.y.toFixed(2);
+            document.getElementById('refZ').value = c.z.toFixed(2);
+            updateRefPointVisual();
+        });
+
+        // 执行旋转
+        function performRotation(mode) {
+            if (selection.length === 0) return;
+
+            const deg = parseFloat(document.getElementById('rotAngle').value);
+            const rad = THREE.MathUtils.degToRad(deg);
+            const axisKey = document.getElementById('rotAxis').value;
+            // 定义旋转轴 (X, Y, or Z)
+            const axis = new THREE.Vector3(axisKey==='x'?1:0, axisKey==='y'?1:0, axisKey==='z'?1:0);
+
+            if (mode === 'self') {
+                // --- 自身旋转 (Self Spin) ---
+                // 逻辑：每个物体绕着它自己的中心旋转
+                selection.forEach(obj => {
+                    // rotateOnAxis 是在局部坐标系旋转，如果物体本身已经歪了，X轴可能不是世界X轴
+                    // 如果你想要“无论物体怎么歪，都绕着世界X轴自转”，用 rotateOnWorldAxis
+                    obj.rotateOnWorldAxis(axis, rad); 
+                });
+            } else if (mode === 'ref') {
+                // --- 参考点公转 (Orbit Pivot) ---
+                // 逻辑：以参考点为圆心，旋转物体的位置
+                const rx = parseFloat(document.getElementById('refX').value)||0;
+                const ry = parseFloat(document.getElementById('refY').value)||0;
+                const rz = parseFloat(document.getElementById('refZ').value)||0;
+                const pivot = new THREE.Vector3(rx, ry, rz);
+
+                selection.forEach(obj => {
+                    // 1. 将物体位置平移，使得 pivot 变为原点
+                    obj.position.sub(pivot); 
+                    // 2. 绕轴旋转位置向量
+                    obj.position.applyAxisAngle(axis, rad);
+                    // 3. 同时旋转物体自身的朝向 (卫星总是同一面朝向地球吗？通常CAD里是的，跟着转)
+                    obj.rotateOnWorldAxis(axis, rad);
+                    // 4. 移回原位
+                    obj.position.add(pivot);
+                });
+            }
+            // 更新后重新计算矩阵，确保后续操作准确
+            selection.forEach(o => o.updateMatrixWorld(true));
+        }
+
+        document.getElementById('rotSelfBtn').addEventListener('click', () => performRotation('self'));
+        document.getElementById('rotRefBtn').addEventListener('click', () => performRotation('ref'));
+
+        // --- 4. 复制逻辑 ---
+        document.getElementById('copyGroupBtn').addEventListener('click', () => {
+            if(selection.length === 0) return;
+            const center = getGroupCenter(selection);
+            const target = new THREE.Vector3(
+                parseFloat(document.getElementById('targetX').value),
+                parseFloat(document.getElementById('targetY').value),
+                parseFloat(document.getElementById('targetZ').value)
+            );
+            const offset = new THREE.Vector3().subVectors(target, center);
+            
+            const newSel = [];
+            selection.forEach(old => {
+                const clone = old.clone();
+                // 彻底清除引用
+                clone.userData = { orgMat: old.userData.orgMat }; 
+                if(clone.userData.orgMat) clone.material = clone.userData.orgMat.clone();
+                else clone.material = defaultMat.clone();
+
+                clone.position.add(offset);
+                scene.add(clone);
+                objects.push(clone);
+                newSel.push(clone);
+            });
+            selection = newSel;
+            updateSelectionVisuals();
+        });
+
+        // --- 4. 平移 ---
+        const moveStepInput = document.getElementById('moveStep');
+
+        function translateSelection(axis, sign) {
+            if (selection.length === 0) return;
+            const step = parseFloat(moveStepInput.value) || 0.5;
+            const delta = step * sign;
+            selection.forEach(obj => {
+                if (axis === 'x') obj.position.x += delta;
+                if (axis === 'y') obj.position.y += delta;
+                if (axis === 'z') obj.position.z += delta;
+                obj.updateMatrixWorld(true);
+            });
+        }
+
+        document.getElementById('moveXPos').addEventListener('click', () => translateSelection('x', 1));
+        document.getElementById('moveXNeg').addEventListener('click', () => translateSelection('x', -1));
+        document.getElementById('moveYPos').addEventListener('click', () => translateSelection('y', 1));
+        document.getElementById('moveYNeg').addEventListener('click', () => translateSelection('y', -1));
+        document.getElementById('moveZPos').addEventListener('click', () => translateSelection('z', 1));
+        document.getElementById('moveZNeg').addEventListener('click', () => translateSelection('z', -1));
+
+        // 步长快速调整
+        document.getElementById('moveStepSmall').addEventListener('click', () => {
+            const step = parseFloat(moveStepInput.value) || 0.5;
+            const newVal = Math.max(0.01, step > 1 ? step - 1 : step > 0.1 ? step - 0.1 : step - 0.01);
+            moveStepInput.value = parseFloat(newVal.toFixed(3));
+        });
+        document.getElementById('moveStepLarge').addEventListener('click', () => {
+            const step = parseFloat(moveStepInput.value) || 0.5;
+            const newVal = Math.min(100, step >= 1 ? step + 1 : step >= 0.1 ? step + 0.1 : step + 0.01);
+            moveStepInput.value = parseFloat(newVal.toFixed(3));
+        });
+
+        // 精确移动到指定坐标
+        document.getElementById('moveToBtn').addEventListener('click', () => {
+            if (selection.length === 0) return;
+            const tx = parseFloat(document.getElementById('moveToX').value);
+            const ty = parseFloat(document.getElementById('moveToY').value);
+            const tz = parseFloat(document.getElementById('moveToZ').value);
+            if (isNaN(tx) && isNaN(ty) && isNaN(tz)) return;
+            // 计算选中组的中心，然后移动整个组
+            const center = getGroupCenter(selection);
+            selection.forEach(obj => {
+                if (!isNaN(tx)) obj.position.x += (tx - center.x);
+                if (!isNaN(ty)) obj.position.y += (ty - center.y);
+                if (!isNaN(tz)) obj.position.z += (tz - center.z);
+                obj.updateMatrixWorld(true);
+            });
+        });
+
+        // 键盘快捷键：选中模型后方向键平移
+        document.addEventListener('keydown', (e) => {
+            if (selection.length === 0) return;
+            // 不拦截输入框
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+            const step = parseFloat(moveStepInput.value) || 0.5;
+            let axis = null, sign = 0;
+            switch (e.key) {
+                case 'ArrowRight': axis = 'x'; sign = 1; break;
+                case 'ArrowLeft':  axis = 'x'; sign = -1; break;
+                case 'ArrowUp':    axis = 'y'; sign = 1; break;
+                case 'ArrowDown':  axis = 'y'; sign = -1; break;
+            }
+            if (axis) {
+                e.preventDefault();
+                selection.forEach(obj => {
+                    obj.position[axis] += step * sign;
+                    obj.updateMatrixWorld(true);
+                });
+            }
+        });
+
+        // --- 5. 布尔运算 ---
+        function doBoolean(op) {
+            if(selection.length < 2) return alert('请选中至少 2 个模型 (Shift+点击选择)');
+            const meshA = selection[0];
+            const meshB = selection[1];
+
+            // 关键优化：确保矩阵是最新的
+            meshA.updateMatrixWorld(true);
+            meshB.updateMatrixWorld(true);
+
+            // 保存 meshA 的材质，以便赋予新物体
+            let resultMat = defaultMat.clone();
+            if (meshA.userData.orgMat) {
+                resultMat = meshA.userData.orgMat.clone();
+            } else if (meshA.material) {
+                // 如果没有缓存的原始材质，就用当前的（注意要避开高亮材质）
+                resultMat = meshA.material.clone();
+            }
+
+            try {
+                let res;
+                if(op==='sub') res = CSG.subtract(meshA, meshB);
+                if(op==='add') res = CSG.union(meshA, meshB);
+                if(op==='int') res = CSG.intersect(meshA, meshB);
+
+                if(res) {
+                    res.material = resultMat; // 应用原来的材质
+                    res.castShadow = true; 
+                    res.receiveShadow = true;
+                    
+                    scene.remove(meshA, meshB);
+                    objects = objects.filter(o => o!==meshA && o!==meshB);
+                    
+                    scene.add(res);
+                    objects.push(res);
+                    selection = [res];
+                    updateSelectionVisuals();
+                }
+            } catch(e) { 
+                console.error(e); 
+                alert('运算失败：请确保模型是闭合的，且确实发生了重叠。'); 
+            }
+        }
+        document.getElementById('boolSub').addEventListener('click', () => doBoolean('sub'));
+        document.getElementById('boolUnion').addEventListener('click', () => doBoolean('add'));
+        document.getElementById('boolIntersect').addEventListener('click', () => doBoolean('int'));
+
+        // --- 6. 导出 ---
+        function save(blob, filename) {
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            link.click();
+        }
+
+        document.getElementById('exportStlBtn').addEventListener('click', () => {
+            const exporter = new STLExporter();
+            const str = exporter.parse(scene); 
+            save(new Blob([str], {type: 'text/plain'}), 'model.stl');
+        });
+        document.getElementById('exportObjBtn').addEventListener('click', () => {
+            const exporter = new OBJExporter();
+            save(new Blob([exporter.parse(scene)], {type: 'text/plain'}), 'model.obj');
+        });
+        document.getElementById('delBtn').addEventListener('click', () => {
+            selection.forEach(o => { scene.remove(o); objects = objects.filter(x => x!==o); });
+            selection = [];
+            updateSelectionVisuals();
+        });
+
+        // 渲染循环
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+        
+        window.addEventListener('resize', () => {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        });
+    </script>
+</body>
+</html>
