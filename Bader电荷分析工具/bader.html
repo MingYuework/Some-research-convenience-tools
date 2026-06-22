@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bader电荷(ACF.dat)本地分析工具</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f7fa;
+            color: #333;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h2 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-family: monospace;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .btn-danger {
+            background-color: #e74c3c;
+            padding: 6px 12px;
+        }
+        .btn-danger:hover {
+            background-color: #c0392b;
+        }
+        .btn-success {
+            background-color: #27ae60;
+            font-size: 16px;
+            font-weight: bold;
+            width: 100%;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        .btn-success:hover {
+            background-color: #219653;
+        }
+        .fragment-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 15px;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+        }
+        .fragment-row input {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 120px;
+        }
+        .fragment-row input.name-input {
+            width: 180px;
+        }
+        #status {
+            color: #27ae60;
+            font-weight: bold;
+            margin-left: 15px;
+        }
+        .result-box {
+            padding: 15px;
+            margin-top: 10px;
+            border-radius: 4px;
+            background: #e8f4f8;
+            border-left: 5px solid #3498db;
+        }
+        .donor { border-left-color: #e74c3c; background: #fdedec; }
+        .acceptor { border-left-color: #27ae60; background: #e9f7ef; }
+    </style>
+</head>
+<body>
+
+    <h2>Bader电荷 (ACF.dat) 多片段分析工具</h2>
+
+    <div class="card">
+        <h3>1. 导入数据</h3>
+        <p>请用记事本打开 <code>ACF.dat</code> 文件，全选并复制，粘贴到下方文本框中：</p>
+        <textarea id="acfData" placeholder="在此粘贴 ACF.dat 文本内容..."></textarea>
+        <br>
+        <button onclick="parseData()">解析数据</button>
+        <span id="status">等待解析...</span>
+    </div>
+
+    <div class="card">
+        <h3>2. 设置计算片段</h3>
+        <p>请根据你的 POSCAR 顺序，划定片段的原子序号范围，并填入该片段复合前（纯相）的总价电子数基准。</p>
+        <div id="fragmentsContainer">
+            <div class="fragment-row">
+                <input type="text" class="name-input" placeholder="片段名称" value="">
+                <input type="number" class="start-input" placeholder="起始序号" value="">
+                <input type="number" class="end-input" placeholder="结束序号" value="">
+                <input type="number" step="0.0001" class="zval-input" placeholder="纯相总电子数基准" value="">
+                <button class="btn-danger" onclick="this.parentElement.remove()">删除</button>
+            </div>
+            <div class="fragment-row">
+                <input type="text" class="name-input" placeholder="片段名称" value="">
+                <input type="number" class="start-input" placeholder="起始序号" value="">
+                <input type="number" class="end-input" placeholder="结束序号" value="">
+                <input type="number" step="0.0001" class="zval-input" placeholder="纯相总电子数基准" value="">
+                <button class="btn-danger" onclick="this.parentElement.remove()">删除</button>
+            </div>
+            <div class="fragment-row">
+                <input type="text" class="name-input" placeholder="片段名称" value="">
+                <input type="number" class="start-input" placeholder="起始序号" value="">
+                <input type="number" class="end-input" placeholder="结束序号" value="">
+                <input type="number" step="0.0001" class="zval-input" placeholder="纯相总电子数基准" value="">
+                <button class="btn-danger" onclick="this.parentElement.remove()">删除</button>
+            </div>
+        </div>
+        <button onclick="addFragment()">+ 添加新片段</button>
+    </div>
+
+    <div class="card">
+        <h3>3. 转移结论</h3>
+        <button class="btn-success" onclick="calculate()">一键计算界面得失</button>
+        <div id="resultsArea" style="margin-top: 20px;"></div>
+    </div>
+
+    <script>
+        let parsedCharges = []; // 存储解析后的电荷，索引0对应1号原子
+
+        function parseData() {
+            const text = document.getElementById('acfData').value;
+            if (!text.trim()) {
+                alert("请先粘贴 ACF.dat 数据！");
+                return;
+            }
+
+            const lines = text.split('\n');
+            parsedCharges = [];
+            let count = 0;
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                // 忽略前两行表头、分割线和空行
+                if (i < 2 || line === '' || line.includes('---')) continue;
+                if (line.startsWith('VACUUM') || line.startsWith('NUMBER')) break; // 到达底部
+
+                const parts = line.split(/\s+/);
+                if (parts.length >= 5 && !isNaN(parts[0])) {
+                    // 第5列是 CHARGE，数组索引从0开始，所以 parts[4]
+                    parsedCharges.push(parseFloat(parts[4]));
+                    count++;
+                }
+            }
+
+            if (count > 0) {
+                document.getElementById('status').innerText = `解析成功！共提取了 ${count} 个原子的电荷数据。`;
+                document.getElementById('status').style.color = "#27ae60";
+            } else {
+                document.getElementById('status').innerText = "解析失败，请检查数据格式！";
+                document.getElementById('status').style.color = "#e74c3c";
+            }
+        }
+
+        function addFragment() {
+            const container = document.getElementById('fragmentsContainer');
+            const row = document.createElement('div');
+            row.className = 'fragment-row';
+            row.innerHTML = `
+                <input type="text" class="name-input" placeholder="片段名称">
+                <input type="number" class="start-input" placeholder="起始序号">
+                <input type="number" class="end-input" placeholder="结束序号">
+                <input type="number" step="0.0001" class="zval-input" placeholder="纯相总电子数基准">
+                <button class="btn-danger" onclick="this.parentElement.remove()">删除</button>
+            `;
+            container.appendChild(row);
+        }
+
+        function calculate() {
+            if (parsedCharges.length === 0) {
+                alert("请先点击上方按钮解析 ACF.dat 数据！");
+                return;
+            }
+
+            const rows = document.querySelectorAll('.fragment-row');
+            const resultsArea = document.getElementById('resultsArea');
+            resultsArea.innerHTML = ''; // 清空上次结果
+
+            rows.forEach(row => {
+                const name = row.querySelector('.name-input').value || '未命名片段';
+                const start = parseInt(row.querySelector('.start-input').value);
+                const end = parseInt(row.querySelector('.end-input').value);
+                const baseZval = parseFloat(row.querySelector('.zval-input').value);
+
+                if (isNaN(start) || isNaN(end) || isNaN(baseZval)) {
+                    resultsArea.innerHTML += `<div class="result-box" style="border-left-color: #f1c40f;"><strong>${name}:</strong> 输入信息不全，跳过计算。</div>`;
+                    return;
+                }
+
+                if (start < 1 || end > parsedCharges.length || start > end) {
+                    resultsArea.innerHTML += `<div class="result-box" style="border-left-color: #e74c3c;"><strong>${name}:</strong> 原子序号范围越界或错误！当前最大序号为 ${parsedCharges.length}。</div>`;
+                    return;
+                }
+
+                // 求和当前片段在 ACF.dat 中的实际电荷总量
+                let currentChargeSum = 0;
+                for (let i = start - 1; i < end; i++) {
+                    currentChargeSum += parsedCharges[i];
+                }
+
+                // 核心计算公式： ΔQ = 纯相基准总数 - 当前实际总数
+                const deltaQ = baseZval - currentChargeSum;
+                
+                let conclusion = "";
+                let boxClass = "result-box";
+                
+                if (deltaQ > 0.005) {
+                    conclusion = `净转移量为 <b>+${deltaQ.toFixed(4)} e</b>。结论：该片段整体 <b style="color:#c0392b;">失去电子</b>（充当电子给体 Donor）。`;
+                    boxClass += " donor";
+                } else if (deltaQ < -0.005) {
+                    conclusion = `净转移量为 <b>${deltaQ.toFixed(4)} e</b>。结论：该片段整体 <b style="color:#27ae60;">得到电子</b>（充当电子受体 Acceptor）。`;
+                    boxClass += " acceptor";
+                } else {
+                    conclusion = `净转移量为 <b>${deltaQ.toFixed(4)} e</b>。结论：变化极小，几乎无明显电荷转移。`;
+                }
+
+                const resultHtml = `
+                    <div class="${boxClass}">
+                        <h4 style="margin-top:0; margin-bottom:10px;">${name} (原子 ${start} ~ ${end})</h4>
+                        纯相基准总电子数: ${baseZval.toFixed(4)} <br>
+                        异质结中实际总电荷: ${currentChargeSum.toFixed(4)} <br>
+                        <p style="margin-bottom:0; margin-top:10px; font-size: 15px;">${conclusion}</p>
+                    </div>
+                `;
+                resultsArea.innerHTML += resultHtml;
+            });
+        }
+    </script>
+</body>
+</html>
